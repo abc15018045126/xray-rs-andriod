@@ -1,0 +1,7 @@
+/target/
+rust-xray-jni/target/
+*.so
+*.apk
+*.aar
+.DS_Store
+Thumbs.db
