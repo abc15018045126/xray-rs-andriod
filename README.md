@@ -1,11 +1,11 @@
-# AndroidLibXrayLite-rs
+# xray-rs-andriod
 
-Pure-Rust Android library bridging [`xray-rs`](https://github.com/abc15018045126/xray-rs) into [`v2rayNG`](https://github.com/2dust/v2rayNG) (drop-in replacement for Go `AndroidLibXrayLite` / `libv2ray.aar`), with **zero C dependencies** (no `hev-socks5-tunnel`).
+Pure-Rust Android library bridging [`xray-rs`](https://github.com/abc15018045126/xray-rs) (`v3.5.0`) into [`v2rayNG`](https://github.com/2dust/v2rayNG) (drop-in replacement for Go `AndroidLibXrayLite` / `libv2ray.aar`), with **zero C dependencies** (no `hev-socks5-tunnel`).
 
 ## Directory Structure
 
 ```text
-AndroidLibXrayLite-rs/
+xray-rs-andriod/
 ├── assets/                   # geoip.dat & geosite.dat
 ├── kotlin/
 │   ├── go/Seq.kt             # Minimal drop-in stub for go.Seq
@@ -14,7 +14,7 @@ AndroidLibXrayLite-rs/
 └── build.ps1                 # One-click NDK build + sync + Gradle APK + ADB install
 ```
 
-## Highlights (v0.0.1)
+## Highlights (v3.5.0)
 
 - **100% Pure-Rust Android TUN**: Native `AndroidTunDevice` (`VpnService` `tun_fd` + `AsyncFd`) + vendored pure-Rust `ipstack` (no `hev-socks5-tunnel`).
 - **Socket Protection**: Full `VpnService.protect(fd)` callback wired across TCP, UDP, direct dialers, and DNS sockets.

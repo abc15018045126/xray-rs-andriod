@@ -648,6 +648,7 @@ fn register_android_tun() {
             if flags < 0 || unsafe { libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
                 return Err(Error::Io(io::Error::last_os_error()));
             }
+            #[allow(deprecated)]
             let inner = AsyncFd::new(File::from(owned)).map_err(Error::Io)?;
             Ok(Box::pin(Self { inner }))
         }

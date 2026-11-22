@@ -2,7 +2,7 @@ param(
     [switch]$Release,
     [switch]$AarOnly,
     [switch]$Install,
-    [string]$Target = "v2rayNG-2.3.15",
+    [string]$Target = "v2rayNG\v2rayNG-2.3.15",
     [string]$Device = "",
     [string]$Proxy = ""
 )
