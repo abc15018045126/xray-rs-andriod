@@ -57,6 +57,7 @@ fn init_logging() {
                     .with(android_layer)
                     .try_init();
             }
+            register_android_tun();
         }
         #[cfg(not(target_os = "android"))]
         {
@@ -625,4 +626,77 @@ fn parse_test_url(url: &str) -> (bool, String, u16, String) {
     };
     let host = if host.is_empty() { "www.gstatic.com" } else { host };
     (is_https, host.to_string(), port, path.to_string())
+}
+
+#[cfg(target_os = "android")]
+fn register_android_tun() {
+    use std::io;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::unix::AsyncFd;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    struct RawFdTunStream {
+        inner: AsyncFd<OwnedFd>,
+    }
+
+    impl RawFdTunStream {
+        fn open(fd: i32) -> XResult<BoxStream> {
+            let dup_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
+            if dup_fd < 0 { return Err(Error::Io(io::Error::last_os_error())); }
+            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                let err = io::Error::last_os_error();
+                unsafe { libc::close(dup_fd) };
+                return Err(Error::Io(err));
+            }
+            let inner = AsyncFd::new(unsafe { OwnedFd::from_raw_fd(dup_fd) }).map_err(Error::Io)?;
+            Ok(Box::pin(Self { inner }))
+        }
+    }
+
+    impl AsyncRead for RawFdTunStream {
+        fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+            loop {
+                let mut guard = match self.inner.poll_read_ready(cx) {
+                    Poll::Ready(Ok(g)) => g,
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => return Poll::Pending,
+                };
+                let dst = buf.initialize_unfilled();
+                match guard.try_io(|inner| {
+                    let n = unsafe { libc::read(inner.as_raw_fd(), dst.as_mut_ptr() as *mut libc::c_void, dst.len()) };
+                    if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
+                }) {
+                    Ok(Ok(n)) => { buf.advance(n); return Poll::Ready(Ok(())); }
+                    Ok(Err(e)) => return Poll::Ready(Err(e)),
+                    Err(_) => continue,
+                }
+            }
+        }
+    }
+
+    impl AsyncWrite for RawFdTunStream {
+        fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+            loop {
+                let mut guard = match self.inner.poll_write_ready(cx) {
+                    Poll::Ready(Ok(g)) => g,
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => return Poll::Pending,
+                };
+                match guard.try_io(|inner| {
+                    let n = unsafe { libc::write(inner.as_raw_fd(), buf.as_ptr() as *const libc::c_void, buf.len()) };
+                    if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
+                }) {
+                    Ok(res) => return Poll::Ready(res),
+                    Err(_) => continue,
+                }
+            }
+        }
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> { Poll::Ready(Ok(())) }
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> { Poll::Ready(Ok(())) }
+    }
+
+    xray_core::proxy::tun::tun_android::register_android_tun_opener(Some(Arc::new(RawFdTunStream::open)));
 }
