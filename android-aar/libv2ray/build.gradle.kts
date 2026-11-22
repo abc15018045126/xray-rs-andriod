@@ -1,6 +1,5 @@
 plugins {
     id("com.android.library")
-    id("org.jetbrains.kotlin.android")
 }
 
 android {
@@ -20,9 +19,9 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.srcDirs("../../kotlin")
-            assets.srcDirs("../../assets")
-            jniLibs.srcDirs("src/main/jniLibs")
+            kotlin.directories.add("../../kotlin")
+            assets.directories.add("../../assets")
+            jniLibs.directories.add("src/main/jniLibs")
         }
     }
 
@@ -30,10 +29,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
 
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        }
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
