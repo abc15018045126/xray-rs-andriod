@@ -1,22 +1,37 @@
 param(
     [switch]$Release,
+    [switch]$AarOnly,
     [switch]$Install,
-    [string]$Device = ""
+    [string]$Target = "v2rayNG-2.3.15",
+    [string]$Device = "",
+    [string]$Proxy = ""
 )
 
 $ErrorActionPreference = "Stop"
 $LibRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$V2rayNgApp = Join-Path (Split-Path -Parent $LibRoot) "v2rayNG-master\V2rayNG\app\src\main"
-$V2rayNgRoot = Join-Path (Split-Path -Parent $LibRoot) "v2rayNG-master\V2rayNG"
+$AarProj = Join-Path $LibRoot "android-aar"
+$AarJniLibs = Join-Path $AarProj "libv2ray\src\main\jniLibs"
+$DistDir = Join-Path $LibRoot "dist"
 
 if (-not $env:ANDROID_NDK_HOME) {
-    $env:ANDROID_NDK_HOME = "C:\Users\abc15\AppData\Local\Android\Sdk\ndk\27.1.12297006"
+    $env:ANDROID_NDK_HOME = "C:\Users\abc15\AppData\Local\Android\Sdk\ndk\29.0.14206865"
 }
 
-Write-Host "=== [1/4] Building arm64-v8a libxray_android.so (Release=$Release) ===" -ForegroundColor Cyan
+$gradleProxyArgs = @()
+if ($Proxy) {
+    $parts = $Proxy.Split(":")
+    if ($parts.Length -eq 2) {
+        $gradleProxyArgs = @(
+            "-Dhttp.proxyHost=$($parts[0])", "-Dhttp.proxyPort=$($parts[1])",
+            "-Dhttps.proxyHost=$($parts[0])", "-Dhttps.proxyPort=$($parts[1])"
+        )
+    }
+}
+
+Write-Host "=== [1/4] Building arm64-v8a libxray_android.so (Release=$Release, NDK=$env:ANDROID_NDK_HOME) ===" -ForegroundColor Cyan
 Push-Location (Join-Path $LibRoot "rust-xray-jni")
 try {
-    $ndkArgs = @("ndk", "-t", "arm64-v8a", "-P", "24", "-o", (Join-Path $V2rayNgApp "jniLibs"), "build")
+    $ndkArgs = @("ndk", "-t", "arm64-v8a", "-P", "24", "-o", $AarJniLibs, "build")
     if ($Release) { $ndkArgs += "--release" }
     & cargo @ndkArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo ndk build failed" }
@@ -24,19 +39,38 @@ try {
     Pop-Location
 }
 
-Write-Host "=== [2/4] Syncing assets & libv2ray Kotlin bindings into v2rayNG ===" -ForegroundColor Cyan
-New-Item -ItemType Directory -Force -Path (Join-Path $V2rayNgApp "assets"), (Join-Path $V2rayNgApp "java\libv2ray"), (Join-Path $V2rayNgApp "java\go") | Out-Null
-Copy-Item (Join-Path $LibRoot "assets\*") (Join-Path $V2rayNgApp "assets\") -Force
-Copy-Item (Join-Path $LibRoot "kotlin\libv2ray\*.kt") (Join-Path $V2rayNgApp "java\libv2ray\") -Force
-Copy-Item (Join-Path $LibRoot "kotlin\go\Seq.kt") (Join-Path $V2rayNgApp "java\go\") -Force
+Write-Host "=== [2/4] Packaging standard libv2ray.aar (Gradle 9.8.2 + AGP 9.4.1 + Kotlin 2.4.21 + SDK 37) ===" -ForegroundColor Cyan
+Push-Location $AarProj
+try {
+    & .\gradlew.bat :libv2ray:assembleRelease @gradleProxyArgs
+    if ($LASTEXITCODE -ne 0) { throw "AAR Gradle build failed" }
+} finally {
+    Pop-Location
+}
 
-Write-Host "=== [3/4] Building v2rayNG APK ===" -ForegroundColor Cyan
+New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
+$BuiltAar = Join-Path $AarProj "libv2ray\build\outputs\aar\libv2ray-release.aar"
+$OutAar = Join-Path $DistDir "libv2ray.aar"
+Copy-Item $BuiltAar $OutAar -Force
+Write-Host ("Built AAR: $OutAar (" + [math]::Round((Get-Item $OutAar).Length / 1MB, 2) + " MB)") -ForegroundColor Green
+
+if ($AarOnly) {
+    return
+}
+
+$V2rayNgRoot = Join-Path (Split-Path -Parent $LibRoot) "$Target\V2rayNG"
+$V2rayNgLibs = Join-Path $V2rayNgRoot "app\libs"
+New-Item -ItemType Directory -Force -Path $V2rayNgLibs | Out-Null
+Copy-Item $OutAar (Join-Path $V2rayNgLibs "libv2ray.aar") -Force
+Write-Host "Copied libv2ray.aar -> $V2rayNgLibs (zero frontend code modified!)" -ForegroundColor Cyan
+
+Write-Host "=== [3/4] Building $Target APK ===" -ForegroundColor Cyan
 Push-Location $V2rayNgRoot
 try {
     $task = if ($Release) { "assembleFdroidRelease" } else { "assembleFdroidDebug" }
     $skip = if ($Release) { "checkFdroidReleaseAarMetadata" } else { "checkFdroidDebugAarMetadata" }
-    & .\gradlew.bat $task -x $skip
-    if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
+    & .\gradlew.bat $task -x $skip @gradleProxyArgs
+    if ($LASTEXITCODE -ne 0) { throw "APK Gradle build failed" }
 } finally {
     Pop-Location
 }

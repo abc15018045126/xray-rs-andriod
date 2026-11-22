@@ -1,5 +1,10 @@
 /target/
 rust-xray-jni/target/
+android-aar/.gradle/
+android-aar/build/
+android-aar/libv2ray/build/
+android-aar/libv2ray/src/main/jniLibs/
+dist/
 *.so
 *.apk
 *.aar
