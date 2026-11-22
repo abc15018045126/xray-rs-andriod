@@ -48,6 +48,8 @@ class CoreController(private val handler: CoreCallbackHandler) {
     }
 
     fun measureDelay(testUrl: String): Long {
+        val activeMs = Libv2ray.nativeMeasureDelay(testUrl)
+        if (activeMs >= 0L) return activeMs
         val cfg = lastConfigJson
         if (cfg.isNotEmpty()) {
             val ms = Libv2ray.nativeMeasureOutboundDelay(cfg, testUrl)

@@ -259,9 +259,9 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeCheckVersionX(
     _class: JClass,
 ) -> jstring {
     let ver = if cfg!(debug_assertions) {
-        "xray-rs 3.0.7-debug (Rust + 19876)"
+        "xray-rs 3.0.9-debug (Rust + 19876)"
     } else {
-        "xray-rs 3.0.7 (Rust)"
+        "xray-rs 3.0.9 (Rust)"
     };
     make_jstring(&env, ver)
 }
@@ -395,6 +395,98 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeIsRunning(
     if running { JNI_TRUE } else { JNI_FALSE }
 }
 
+async fn measure_http_delay(
+    outbound: Arc<dyn xray_core::features::outbound::OutboundHandler>,
+    url: &str,
+) -> jlong {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (is_https, host, port, path) = parse_test_url(url);
+    let host_port = format!("{}:{}", host, port);
+    let dest = match xray_core::common::net::Destination::parse_str(
+        &host_port,
+        xray_core::common::net::Network::Tcp,
+    ) {
+        Ok(d) => d,
+        Err(_) => return -1,
+    };
+
+    // Build TLS client before starting timer so local cert store init isn't counted as network RTT.
+    let tls_client = if is_https {
+        match xray_core::transport::internet::TlsClient::new(
+            &host,
+            false,
+            vec![b"http/1.1".to_vec()],
+        ) {
+            Ok(c) => Some(c),
+            Err(_) => return -1,
+        }
+    } else {
+        None
+    };
+
+    let session = xray_core::common::protocol::SessionContext::new("delay-test", dest);
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nUser-Agent: v2rayNG\r\n\r\n",
+        path, host
+    );
+
+    let t0 = Instant::now();
+    let res = tokio::time::timeout(Duration::from_secs(6), async move {
+        let mut stream = outbound.connect(&session).await?;
+        if let Some(tls) = tls_client {
+            stream = tls.connect(&host, stream).await?;
+        }
+        stream.write_all(req.as_bytes()).await.map_err(xray_core::common::errors::Error::Io)?;
+        stream.flush().await.map_err(xray_core::common::errors::Error::Io)?;
+        let mut buf = [0u8; 256];
+        let n = stream.read(&mut buf).await.map_err(xray_core::common::errors::Error::Io)?;
+        if n == 0 {
+            return Err(xray_core::common::errors::Error::Protocol(
+                "empty HTTP response".into(),
+            ));
+        }
+        let head = String::from_utf8_lossy(&buf[..n]);
+        if !head.starts_with("HTTP/") {
+            return Err(xray_core::common::errors::Error::Protocol(
+                "non-HTTP response".into(),
+            ));
+        }
+        Ok::<(), xray_core::common::errors::Error>(())
+    })
+    .await;
+
+    match res {
+        Ok(Ok(())) => {
+            let ms = t0.elapsed().as_millis().max(1) as jlong;
+            logcat_write(
+                "xray-rs",
+                &format!("measureDelay({}://{}{}) => {}ms", if is_https { "https" } else { "http" }, host_port, path, ms),
+            );
+            ms
+        }
+        _ => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureDelay(
+    mut env: JNIEnv,
+    _class: JClass,
+    test_url: JString,
+) -> jlong {
+    init_logging();
+    let url = get_string(&mut env, test_url);
+    let outbound = running_slot()
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|c| c.instance.dispatcher.get_handler("proxy")));
+    let Some(outbound) = outbound else {
+        return -1;
+    };
+    runtime().block_on(measure_http_delay(outbound, &url))
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureOutboundDelay(
     mut env: JNIEnv,
@@ -405,8 +497,43 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureOutboundDelay(
     init_logging();
     let json_str = get_string(&mut env, config_json);
     let url = get_string(&mut env, test_url);
-    let cfg: Config = match serde_json::from_str(&json_str) {
-        Ok(c) => c,
+
+    // 1:1 with official Go AndroidLibXrayLite MeasureOutboundDelay:
+    // strip inbounds and disable Pingora testpre background workers so delay testing
+    // does not spawn competing pre-connect handshakes.
+    let cfg: Config = match serde_json::from_str::<serde_json::Value>(&json_str) {
+        Ok(mut val) => {
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("inbounds".to_string(), serde_json::Value::Array(Vec::new()));
+                if let Some(outbounds) = obj.get_mut("outbounds").and_then(|v| v.as_array_mut()) {
+                    for ob in outbounds {
+                        if let Some(vnext) = ob
+                            .pointer_mut("/settings/vnext")
+                            .and_then(|v| v.as_array_mut())
+                        {
+                            for srv in vnext {
+                                if let Some(users) =
+                                    srv.get_mut("users").and_then(|u| u.as_array_mut())
+                                {
+                                    for user in users {
+                                        if let Some(uobj) = user.as_object_mut() {
+                                            uobj.insert(
+                                                "testpre".to_string(),
+                                                serde_json::Value::from(0),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            match serde_json::from_value(val) {
+                Ok(c) => c,
+                Err(_) => return -1,
+            }
+        }
         Err(_) => return -1,
     };
 
@@ -424,25 +551,7 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureOutboundDelay(
         else {
             return -1;
         };
-
-        let host_port = parse_url_host_port(&url);
-        let dest = match xray_core::common::net::Destination::parse_str(
-            &host_port,
-            xray_core::common::net::Network::Tcp,
-        ) {
-            Ok(d) => d,
-            Err(_) => return -1,
-        };
-        let session = xray_core::common::protocol::SessionContext::new("delay-test", dest);
-        let t0 = Instant::now();
-        match tokio::time::timeout(Duration::from_secs(6), outbound.connect(&session)).await {
-            Ok(Ok(_stream)) => {
-                let ms = t0.elapsed().as_millis().max(1) as jlong;
-                logcat_write("xray-rs", &format!("measureOutboundDelay({}) => {}ms", host_port, ms));
-                ms
-            }
-            _ => -1,
-        }
+        measure_http_delay(outbound, &url).await
     })
 }
 
@@ -454,19 +563,35 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeQueryAllOutboundTrafficStats
     make_jstring(&env, "[]")
 }
 
-fn parse_url_host_port(url: &str) -> String {
+fn parse_test_url(url: &str) -> (bool, String, u16, String) {
     let trimmed = url.trim();
-    let (default_port, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
-        (443u16, r)
-    } else if let Some(r) = trimmed.strip_prefix("http://") {
-        (80u16, r)
+    let trimmed = if trimmed.is_empty() {
+        "https://www.google.com/generate_204"
     } else {
-        (80u16, trimmed)
+        trimmed
     };
-    let host_part = rest.split('/').next().unwrap_or("www.gstatic.com");
-    if host_part.contains(':') {
-        host_part.to_string()
+    let (is_https, default_port, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
+        (true, 443u16, r)
+    } else if let Some(r) = trimmed.strip_prefix("http://") {
+        (false, 80u16, r)
     } else {
-        format!("{}:{}", host_part, default_port)
-    }
+        (false, 80u16, trimmed)
+    };
+    let (host_port, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/generate_204"),
+    };
+    let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':')
+        && let Ok(parsed_port) = p.parse::<u16>()
+    {
+        (h.to_string(), parsed_port)
+    } else {
+        (host_port.to_string(), default_port)
+    };
+    let host = if host.is_empty() {
+        "www.gstatic.com".to_string()
+    } else {
+        host
+    };
+    (is_https, host, port, path.to_string())
 }

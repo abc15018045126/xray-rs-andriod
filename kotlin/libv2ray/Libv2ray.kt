@@ -31,6 +31,9 @@ object Libv2ray {
     external fun nativeIsRunning(): Boolean
 
     @JvmStatic
+    external fun nativeMeasureDelay(testUrl: String): Long
+
+    @JvmStatic
     external fun nativeMeasureOutboundDelay(configJson: String, testUrl: String): Long
 
     @JvmStatic
