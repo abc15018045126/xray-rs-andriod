@@ -3527,10 +3527,11 @@ dependencies = [
 
 [[package]]
 name = "xray-android"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "hex",
  "jni 0.21.1",
+ "libc",
  "rustls",
  "serde_json",
  "sha2",
@@ -3544,9 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "xray-rs"
-version = "3.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59eecd6ca609fc02a54183e0dfb2d063c1bc5ef986f96246ab0b2765d31ce443"
+version = "3.5.0"
 dependencies = [
  "aes-gcm",
  "ahash",
@@ -3566,7 +3565,6 @@ dependencies = [
  "http",
  "httparse",
  "ipnet",
- "libc",
  "log",
  "md-5",
  "network-interface",
@@ -3598,6 +3596,15 @@ dependencies = [
  "windows",
  "wintun-rs",
  "x25519-dalek",
+ "xray-rs-window",
+]
+
+[[package]]
+name = "xray-rs-window"
+version = "0.1.0"
+dependencies = [
+ "ipnet",
+ "windows",
 ]
 
 [[package]]

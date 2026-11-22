@@ -32,11 +32,9 @@ static ASSET_DIR: Mutex<String> = Mutex::new(String::new());
 
 fn set_env(key: &str, val: Option<&str>) {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        match val {
-            Some(v) if !v.is_empty() => std::env::set_var(key, v),
-            _ => std::env::remove_var(key),
-        }
+    match val {
+        Some(v) if !v.is_empty() => unsafe { std::env::set_var(key, v) },
+        _ => unsafe { std::env::remove_var(key) },
     }
 }
 
@@ -67,9 +65,9 @@ fn init_logging() {
                 .try_init();
         }
         #[cfg(debug_assertions)]
-        let _ = runtime().spawn(async {
-            let _ = xray_core::debug_panel::server::spawn_server("127.0.0.1:19876".to_string());
-        });
+        drop(runtime().spawn(async {
+            drop(xray_core::debug_panel::server::spawn_server("127.0.0.1:19876".to_string()));
+        }));
     });
 }
 
@@ -84,11 +82,11 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-fn get_string(env: &mut JNIEnv, s: JString) -> String {
+fn get_string(env: &mut JNIEnv<'_>, s: JString<'_>) -> String {
     env.get_string(&s).map(Into::into).unwrap_or_default()
 }
 
-fn make_jstring(env: &JNIEnv, s: &str) -> jstring {
+fn make_jstring(env: &JNIEnv<'_>, s: &str) -> jstring {
     env.new_string(s)
         .map(|js| js.into_raw())
         .unwrap_or_else(|_| JString::default().into_raw())
@@ -106,10 +104,10 @@ fn log_startup_debug(json_str: &str, tun_fd: i32) {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeInitCoreEnv(
-    mut env: JNIEnv,
-    _class: JClass,
-    asset_path: JString,
-    device_id: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    asset_path: JString<'_>,
+    device_id: JString<'_>,
 ) {
     init_logging();
     let asset = get_string(&mut env, asset_path);
@@ -129,20 +127,20 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeInitCoreEnv(
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_libv2ray_Libv2ray_nativeCheckVersionX(env: JNIEnv, _class: JClass) -> jstring {
+pub extern "system" fn Java_libv2ray_Libv2ray_nativeCheckVersionX(env: JNIEnv<'_>, _class: JClass<'_>) -> jstring {
     let ver = if cfg!(debug_assertions) {
-        "xray-rs 3.0.9-debug (Rust + 19876)"
+        "xray-rs 3.5.0-debug (Rust + 19876)"
     } else {
-        "xray-rs 3.0.9 (Rust)"
+        "xray-rs 3.5.0 (Rust)"
     };
     make_jstring(&env, ver)
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeRegisterProtector(
-    env: JNIEnv,
-    _class: JClass,
-    protector_obj: JObject,
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    protector_obj: JObject<'_>,
 ) {
     init_logging();
     if protector_obj.is_null() {
@@ -169,9 +167,9 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeRegisterProtector(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeStartLoop(
-    mut env: JNIEnv,
-    _class: JClass,
-    config_json: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    config_json: JString<'_>,
     tun_fd: jint,
 ) -> jstring {
     init_logging();
@@ -219,12 +217,12 @@ fn stop_internal() -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_libv2ray_Libv2ray_nativeStopLoop(_env: JNIEnv, _class: JClass) -> jboolean {
+pub extern "system" fn Java_libv2ray_Libv2ray_nativeStopLoop(_env: JNIEnv<'_>, _class: JClass<'_>) -> jboolean {
     if stop_internal() { JNI_TRUE } else { JNI_FALSE }
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_libv2ray_Libv2ray_nativeIsRunning(_env: JNIEnv, _class: JClass) -> jboolean {
+pub extern "system" fn Java_libv2ray_Libv2ray_nativeIsRunning(_env: JNIEnv<'_>, _class: JClass<'_>) -> jboolean {
     let running = RUNNING
         .lock()
         .ok()
@@ -235,9 +233,9 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeIsRunning(_env: JNIEnv, _cla
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeReconcileBrowserDialer(
-    mut env: JNIEnv,
-    _class: JClass,
-    dialer_addr: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    dialer_addr: JString<'_>,
 ) {
     let addr = get_string(&mut env, dialer_addr);
     set_env("xray.browser.dialer", Some(&addr));
@@ -387,9 +385,9 @@ async fn measure_http_delay(outbound: Arc<dyn OutboundHandler>, url: &str) -> jl
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureDelay(
-    mut env: JNIEnv,
-    _class: JClass,
-    test_url: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    test_url: JString<'_>,
 ) -> jlong {
     init_logging();
     let url = get_string(&mut env, test_url);
@@ -405,10 +403,10 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureDelay(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureOutboundDelay(
-    mut env: JNIEnv,
-    _class: JClass,
-    config_json: JString,
-    test_url: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    config_json: JString<'_>,
+    test_url: JString<'_>,
 ) -> jlong {
     init_logging();
     let json_str = get_string(&mut env, config_json);
@@ -455,10 +453,10 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeMeasureOutboundDelay(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeQueryStats(
-    mut env: JNIEnv,
-    _class: JClass,
-    tag: JString,
-    direct: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    tag: JString<'_>,
+    direct: JString<'_>,
 ) -> jlong {
     let name = format!(
         "outbound>>>{}>>>traffic>>>{}",
@@ -475,8 +473,8 @@ pub extern "system" fn Java_libv2ray_Libv2ray_nativeQueryStats(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeQueryAllOutboundTrafficStats(
-    env: JNIEnv,
-    _class: JClass,
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
 ) -> jstring {
     let mut out = String::new();
     if let Ok(guard) = RUNNING.lock()
@@ -551,9 +549,9 @@ fn insecure_tls_connector() -> &'static tokio_rustls::TlsConnector {
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_libv2ray_Libv2ray_nativeFetchTlsCertSha256(
-    mut env: JNIEnv,
-    _class: JClass,
-    request_json: JString,
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request_json: JString<'_>,
 ) -> jstring {
     let req_str = get_string(&mut env, request_json);
     let val: serde_json::Value = match serde_json::from_str(&req_str) {
@@ -630,28 +628,27 @@ fn parse_test_url(url: &str) -> (bool, String, u16, String) {
 
 #[cfg(target_os = "android")]
 fn register_android_tun() {
-    use std::io;
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::fd::{AsRawFd, BorrowedFd};
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use tokio::io::unix::AsyncFd;
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
     struct RawFdTunStream {
-        inner: AsyncFd<OwnedFd>,
+        inner: AsyncFd<File>,
     }
 
     impl RawFdTunStream {
         fn open(fd: i32) -> XResult<BoxStream> {
-            let dup_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
-            if dup_fd < 0 { return Err(Error::Io(io::Error::last_os_error())); }
-            let flags = unsafe { libc::fcntl(dup_fd, libc::F_GETFL) };
-            if flags < 0 || unsafe { libc::fcntl(dup_fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-                let err = io::Error::last_os_error();
-                unsafe { libc::close(dup_fd) };
-                return Err(Error::Io(err));
+            let owned = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned().map_err(Error::Io)?;
+            let raw = owned.as_raw_fd();
+            let flags = unsafe { libc::fcntl(raw, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                return Err(Error::Io(io::Error::last_os_error()));
             }
-            let inner = AsyncFd::new(unsafe { OwnedFd::from_raw_fd(dup_fd) }).map_err(Error::Io)?;
+            let inner = AsyncFd::new(File::from(owned)).map_err(Error::Io)?;
             Ok(Box::pin(Self { inner }))
         }
     }
@@ -665,10 +662,7 @@ fn register_android_tun() {
                     Poll::Pending => return Poll::Pending,
                 };
                 let dst = buf.initialize_unfilled();
-                match guard.try_io(|inner| {
-                    let n = unsafe { libc::read(inner.as_raw_fd(), dst.as_mut_ptr() as *mut libc::c_void, dst.len()) };
-                    if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
-                }) {
+                match guard.try_io(|inner| inner.get_ref().read(dst)) {
                     Ok(Ok(n)) => { buf.advance(n); return Poll::Ready(Ok(())); }
                     Ok(Err(e)) => return Poll::Ready(Err(e)),
                     Err(_) => continue,
@@ -685,10 +679,7 @@ fn register_android_tun() {
                     Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                     Poll::Pending => return Poll::Pending,
                 };
-                match guard.try_io(|inner| {
-                    let n = unsafe { libc::write(inner.as_raw_fd(), buf.as_ptr() as *const libc::c_void, buf.len()) };
-                    if n < 0 { Err(io::Error::last_os_error()) } else { Ok(n as usize) }
-                }) {
+                match guard.try_io(|inner| inner.get_ref().write(buf)) {
                     Ok(res) => return Poll::Ready(res),
                     Err(_) => continue,
                 }
