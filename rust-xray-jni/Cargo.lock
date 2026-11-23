@@ -3527,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "xray-android"
-version = "3.5.0"
+version = "3.5.1"
 dependencies = [
  "hex",
  "jni 0.21.1",
@@ -3545,9 +3545,9 @@ dependencies = [
 
 [[package]]
 name = "xray-rs"
-version = "3.5.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b23a094bf254af024d07bb900c65163db06dd91af0b4cd6258975be49d8e705a"
+checksum = "586eabf54d8a7b6736ec3a1539d42ee0aa21d7af44cdadac0827eec658389107"
 dependencies = [
  "aes-gcm",
  "ahash",
